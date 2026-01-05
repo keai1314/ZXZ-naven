@@ -123,6 +123,13 @@ public class DynamicIsland extends Module {
             .setFloatStep(10.0F)
             .build()
             .getFloatValue();
+    public FloatValue islandHeight = ValueBuilder.create(this, "高度")
+            .setDefaultFloatValue(40.0F)
+            .setMinFloatValue(30.0F)
+            .setMaxFloatValue(100.0F)
+            .setFloatStep(5.0F)
+            .build()
+            .getFloatValue();
     
     @EventTarget
     public void onRender(EventRender2D e) {
@@ -176,8 +183,9 @@ public class DynamicIsland extends Module {
         long currentTime = System.currentTimeMillis();
         notifications.removeIf(item -> currentTime - item.getTimestamp() > 10000);
         
-        // 更新当前高度
-        float targetHeight = DEFAULT_HEIGHT + Math.min(notifications.size() * ITEM_HEIGHT, MAX_HEIGHT - DEFAULT_HEIGHT);
+        // 更新当前高度，使用配置的基础高度
+        float baseHeight = islandHeight.getCurrentValue();
+        float targetHeight = baseHeight + Math.min(notifications.size() * ITEM_HEIGHT, MAX_HEIGHT - baseHeight);
         mainHeightAnimation.target = targetHeight;
         currentHeight = mainHeightAnimation.value;
     }
