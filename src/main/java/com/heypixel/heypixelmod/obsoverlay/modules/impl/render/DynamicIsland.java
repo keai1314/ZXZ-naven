@@ -18,7 +18,6 @@ import com.heypixel.heypixelmod.obsoverlay.values.impl.BooleanValue;
 import com.heypixel.heypixelmod.obsoverlay.values.impl.FloatValue;
 import com.heypixel.heypixelmod.obsoverlay.values.impl.ModeValue;
 import net.minecraft.client.Minecraft;
-import org.apache.commons.lang3.StringUtils;
 import org.joml.Vector4f;
 
 import java.awt.*;
@@ -105,6 +104,7 @@ public class DynamicIsland extends Module {
     private float currentWidth = DEFAULT_WIDTH;
     private float currentHeight = DEFAULT_HEIGHT;
     private float watermarkHeight;
+    private List<Vector4f> blurMatrices = new ArrayList<>();
     
     // 配置选项
     public BooleanValue showTime = ValueBuilder.create(this, "显示时间").setDefaultBooleanValue(true).build().getBooleanValue();
@@ -131,6 +131,9 @@ public class DynamicIsland extends Module {
         // 更新动画
         updateAnimations();
         
+        // 清空模糊矩阵
+        blurMatrices.clear();
+        
         e.getStack().pushPose();
         
         // 渲染灵动岛
@@ -149,6 +152,13 @@ public class DynamicIsland extends Module {
             float centerX = (mc.getWindow().getGuiScaledWidth() - currentWidth) / 2.0F;
             float centerY = 20.0F;
             RenderUtils.drawRoundedRect(e.getStack(), centerX + 2.0F, centerY + 2.0F, currentWidth, currentHeight, CORNER_RADIUS, Integer.MIN_VALUE);
+        }
+        
+        if (e.getType() == EventType.BLUR) {
+            // 渲染模糊区域
+            for (Vector4f blurMatrix : blurMatrices) {
+                RenderUtils.fillBound(e.getStack(), blurMatrix.x(), blurMatrix.y(), blurMatrix.z(), blurMatrix.w(), 1073741824);
+            }
         }
     }
     
@@ -178,28 +188,30 @@ public class DynamicIsland extends Module {
         float centerX = (screenWidth - currentWidth) / 2.0F;
         float centerY = 20.0F;
         
-        // 绘制主背景，使用与HUD相同的背景色
-        // 修复圆角绘制：将半径设置为较小值，确保所有圆角都能正确显示
-        RenderUtils.drawRoundedRect(e.getStack(), centerX, centerY, currentWidth, currentHeight, Math.min(CORNER_RADIUS, 10.0F), HUD.bodyColor);
+        // 白灰色35%透明度的毛玻璃效果背景
+        int glassColor = new Color(200, 200, 200, 89).getRGB(); // 35%透明度的白灰色
         
-        // 绘制顶部强调色条，使用与HUD相同的强调色
+        // 添加模糊矩阵
+        blurMatrices.add(new Vector4f(centerX, centerY, currentWidth, currentHeight));
+        
+        // 绘制主背景
+        RenderUtils.drawRoundedRect(e.getStack(), centerX, centerY, currentWidth, currentHeight, Math.min(CORNER_RADIUS, 8.0F), glassColor);
+        
+        // 绘制顶部强调色条
         RenderUtils.fill(e.getStack(), centerX, centerY, centerX + currentWidth, centerY + 2.0F, HUD.accentColor);
         
         // 绘制左侧模块名称
         if (showModuleName.getCurrentValue()) {
             String moduleName = "Dynamic Island";
-            font.render(e.getStack(), moduleName, centerX + PADDING, centerY + 12.0F, Color.WHITE, true, 0.35);
+            font.render(e.getStack(), moduleName, centerX + PADDING, centerY + 12.0F, Color.BLACK, true, 0.35);
         }
         
         // 绘制右侧时间
         if (showTime.getCurrentValue()) {
             String time = TIME_FORMAT.format(new Date());
             float timeWidth = font.getWidth(time, 0.35);
-            font.render(e.getStack(), time, centerX + currentWidth - timeWidth - PADDING, centerY + 12.0F, Color.WHITE, true, 0.35);
+            font.render(e.getStack(), time, centerX + currentWidth - timeWidth - PADDING, centerY + 12.0F, Color.BLACK, true, 0.35);
         }
-        
-        // 绘制调整大小的滚动条
-        renderResizeHandle(e, centerX, centerY);
     }
     
     private void renderResizeHandle(EventRender2D e, float centerX, float centerY) {
@@ -237,18 +249,24 @@ public class DynamicIsland extends Module {
         
         float yOffset = DEFAULT_HEIGHT;
         
+        // 白灰色35%透明度的毛玻璃效果背景
+        int glassColor = new Color(200, 200, 200, 89).getRGB(); // 35%透明度的白灰色
+        
         // 渲染通知项
         for (int i = 0; i < notifications.size(); i++) {
             NotificationItem item = notifications.get(i);
             float itemHeight = ITEM_HEIGHT * (item.getHeightAnimation().value / 100.0F);
             
             if (itemHeight > 0.0F) {
-                // 绘制通知项背景，使用与HUD相同的背景色
-                RenderUtils.drawRoundedRect(e.getStack(), centerX, centerY + yOffset, currentWidth, itemHeight, Math.min(CORNER_RADIUS, 10.0F), HUD.bodyColor);
+                // 添加通知项的模糊矩阵
+                blurMatrices.add(new Vector4f(centerX, centerY + yOffset, currentWidth, itemHeight));
+                
+                // 绘制通知项背景，使用相同的白灰色35%毛玻璃效果
+                RenderUtils.drawRoundedRect(e.getStack(), centerX, centerY + yOffset, currentWidth, itemHeight, Math.min(CORNER_RADIUS, 8.0F), glassColor);
                 
                 // 绘制模块名称
                 String moduleName = item.getModule().getName();
-                font.render(e.getStack(), moduleName, centerX + PADDING, centerY + yOffset + 10.0F, Color.WHITE, true, 0.35);
+                font.render(e.getStack(), moduleName, centerX + PADDING, centerY + yOffset + 10.0F, Color.BLACK, true, 0.35);
                 
                 // 绘制开关
                 float switchX = centerX + PADDING + font.getWidth(moduleName, 0.35) + 10.0F;

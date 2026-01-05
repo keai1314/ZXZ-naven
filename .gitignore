@@ -1,0 +1,49 @@
+# Gradle build directories
+build/
+.gradle/
+
+# IDE configuration files
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Java class files
+*.class
+
+# JAR files
+build/libs/
+
+# ProGuard configuration
+proguard/
+
+# Local configuration files
+local.properties
+
+# Test reports
+test-results/
+
+# Coverage reports
+coverage/
+jacoco/
+
+# Dependency directories
+lib/
+
+# Native libraries
+*.so
+*.dll
+*.dylib
