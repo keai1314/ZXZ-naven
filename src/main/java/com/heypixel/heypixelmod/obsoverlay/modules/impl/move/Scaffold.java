@@ -563,8 +563,8 @@ public class Scaffold extends Module {
                
                // 检查自救开关是否开启
                if (this.selfRescue.getCurrentValue()) {
-                  // 检查是否处于掉落状态
-                  if (this.isFalling()) {
+                  // 检查是否处于掉落状态且BPS超过13
+                  if (this.isFalling() && speed3D > 13.0) {
                      // 强制更新baseY
                      this.baseY = (int)Math.floor(mc.player.getY()) - 1;
                      

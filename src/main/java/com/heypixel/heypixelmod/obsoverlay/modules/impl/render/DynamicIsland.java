@@ -49,9 +49,6 @@ public class DynamicIsland extends Module {
     private static final int SWITCH_ON_COLOR = new Color(0, 200, 0, 255).getRGB();
     private static final int SWITCH_OFF_COLOR = new Color(200, 0, 0, 255).getRGB();
     
-    // 动画配置
-    private static final float ANIMATION_SPEED = 0.2F;
-    
     // 通知项
     private static class NotificationItem {
         private final Module module;
@@ -64,8 +61,8 @@ public class DynamicIsland extends Module {
             this.module = module;
             this.enabled = enabled;
             this.timestamp = System.currentTimeMillis();
-            this.heightAnimation = new SmoothAnimationTimer(0.0F, ANIMATION_SPEED);
-            this.switchAnimation = new SmoothAnimationTimer(enabled ? 100.0F : 0.0F, ANIMATION_SPEED);
+            this.heightAnimation = new SmoothAnimationTimer(0.0F, 0.2F); // 更快的动画速度
+            this.switchAnimation = new SmoothAnimationTimer(enabled ? 100.0F : 0.0F, 0.2F); // 更快的动画速度
         }
         
         public Module getModule() {
@@ -98,7 +95,7 @@ public class DynamicIsland extends Module {
     // 状态变量
     private final List<NotificationItem> notifications = new ArrayList<>();
     private final ConcurrentHashMap<String, NotificationItem> activeNotifications = new ConcurrentHashMap<>();
-    private final SmoothAnimationTimer mainHeightAnimation = new SmoothAnimationTimer(DEFAULT_HEIGHT, ANIMATION_SPEED);
+    private final SmoothAnimationTimer mainHeightAnimation = new SmoothAnimationTimer(DEFAULT_HEIGHT, 0.2F); // 更快的动画速度
     
     // 渲染变量
     private float currentWidth = DEFAULT_WIDTH;
@@ -109,6 +106,10 @@ public class DynamicIsland extends Module {
     // 配置选项
     public BooleanValue showTime = ValueBuilder.create(this, "显示时间").setDefaultBooleanValue(true).build().getBooleanValue();
     public BooleanValue showModuleName = ValueBuilder.create(this, "显示模块名称").setDefaultBooleanValue(true).build().getBooleanValue();
+    public BooleanValue overlayNotification = ValueBuilder.create(this, "通知覆盖")
+            .setDefaultBooleanValue(false)
+            .build()
+            .getBooleanValue();
     public FloatValue animationSpeed = ValueBuilder.create(this, "动画速度")
             .setDefaultFloatValue(0.2F)
             .setMinFloatValue(0.05F)
@@ -165,8 +166,10 @@ public class DynamicIsland extends Module {
             // 渲染阴影效果
             float centerX = (mc.getWindow().getGuiScaledWidth() - currentWidth) / 2.0F;
             float centerY = 20.0F;
-            // 使用与主体相同的圆角半径8.0F
-            RenderUtils.drawRoundedRect(e.getStack(), centerX + 2.0F, centerY + 2.0F, currentWidth, currentHeight, 8.0F, Integer.MIN_VALUE);
+            float baseHeight = islandHeight.getCurrentValue();
+            
+            // 只渲染基础高度的阴影，不包含通知项
+            RenderUtils.drawRoundedRect(e.getStack(), centerX + 2.0F, centerY + 2.0F, currentWidth, baseHeight, 8.0F, Integer.MIN_VALUE);
         }
         
         if (e.getType() == EventType.BLUR) {
@@ -202,6 +205,7 @@ public class DynamicIsland extends Module {
     private void renderDynamicIsland(EventRender2D e, CustomTextRenderer font) {
         int screenWidth = mc.getWindow().getGuiScaledWidth();
         currentWidth = islandWidth.getCurrentValue();
+        float baseHeight = islandHeight.getCurrentValue();
         float centerX = (screenWidth - currentWidth) / 2.0F;
         float centerY = 20.0F;
         
@@ -211,23 +215,48 @@ public class DynamicIsland extends Module {
         // 添加模糊矩阵
         blurMatrices.add(new Vector4f(centerX, centerY, currentWidth, currentHeight));
         
-        // 绘制主背景
+        // 绘制完整高度的背景
         RenderUtils.drawRoundedRect(e.getStack(), centerX, centerY, currentWidth, currentHeight, Math.min(CORNER_RADIUS, 8.0F), glassColor);
         
         // 绘制顶部强调色条
         RenderUtils.fill(e.getStack(), centerX, centerY, centerX + currentWidth, centerY + 2.0F, HUD.accentColor);
         
-        // 绘制左侧模块名称
-        if (showModuleName.getCurrentValue()) {
-            String moduleName = "Dynamic Island";
-            font.render(e.getStack(), moduleName, centerX + PADDING, centerY + 12.0F, Color.WHITE, true, 0.35);
-        }
+        // 检查是否有通知且开启了覆盖
+        boolean shouldOverlay = overlayNotification.getCurrentValue() && !notifications.isEmpty();
         
-        // 绘制右侧时间
-        if (showTime.getCurrentValue()) {
-            String time = TIME_FORMAT.format(new Date());
-            float timeWidth = font.getWidth(time, 0.35);
-            font.render(e.getStack(), time, centerX + currentWidth - timeWidth - PADDING, centerY + 12.0F, Color.WHITE, true, 0.35);
+        if (shouldOverlay) {
+            // 直接在主文本位置渲染最新的通知
+            renderLatestNotificationInMainArea(e, font, centerX, centerY);
+        } else {
+            // 正常渲染主文本
+            // 绘制左侧模块名称
+            if (showModuleName.getCurrentValue()) {
+                String moduleName = "Dynamic Island";
+                font.render(e.getStack(), moduleName, centerX + PADDING, centerY + 12.0F, Color.WHITE, true, 0.35);
+            }
+            
+            // 绘制右侧时间
+            if (showTime.getCurrentValue()) {
+                String time = TIME_FORMAT.format(new Date());
+                float timeWidth = font.getWidth(time, 0.35);
+                font.render(e.getStack(), time, centerX + currentWidth - timeWidth - PADDING, centerY + 12.0F, Color.WHITE, true, 0.35);
+            }
+        }
+    }
+    
+    private void renderLatestNotificationInMainArea(EventRender2D e, CustomTextRenderer font, float centerX, float centerY) {
+        if (!notifications.isEmpty()) {
+            // 渲染最新的通知（第一个）
+            NotificationItem item = notifications.get(0);
+            
+            // 绘制模块名称
+            String moduleName = item.getModule().getName() + " " + (item.isEnabled() ? "已启用" : "已禁用");
+            font.render(e.getStack(), moduleName, centerX + PADDING, centerY + 12.0F, Color.WHITE, true, 0.35);
+            
+            // 绘制开关
+            float switchX = centerX + currentWidth - PADDING - SWITCH_WIDTH;
+            float switchY = centerY + (islandHeight.getCurrentValue() - SWITCH_HEIGHT) / 2.0F;
+            renderSwitch(e, switchX, switchY, item.getSwitchAnimation().value, item.isEnabled());
         }
     }
     
@@ -350,38 +379,4 @@ public class DynamicIsland extends Module {
         String moduleName = module.getName();
         
         // 移除现有通知（如果存在）
-        notifications.removeIf(item -> item.getModule().getName().equals(moduleName));
-        
-        // 创建新通知
-        NotificationItem newItem = new NotificationItem(module, enabled);
-        notifications.add(0, newItem);
-        
-        // 限制最大通知数量
-        if (notifications.size() > 5) {
-            notifications.remove(notifications.size() - 1);
-        }
-        
-        // 触发高度动画
-        for (NotificationItem item : notifications) {
-            item.getHeightAnimation().target = 100.0F;
-        }
-    }
-    
-    @Override
-    public void onEnable() {
-        // 注册模块状态变化监听器
-        Naven.getInstance().getEventManager().register(this);
-        
-        // 初始通知
-        addNotification(this, true);
-    }
-    
-    @Override
-    public void onDisable() {
-        // 取消注册模块状态变化监听器
-        Naven.getInstance().getEventManager().unregister(this);
-        
-        // 清空通知
-        notifications.clear();
-    }
-}
+        notifications.removeIf(item -> item.getModule(
