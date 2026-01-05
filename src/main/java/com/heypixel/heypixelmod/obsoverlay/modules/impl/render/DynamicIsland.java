@@ -130,6 +130,13 @@ public class DynamicIsland extends Module {
             .setFloatStep(5.0F)
             .build()
             .getFloatValue();
+    public FloatValue notificationTime = ValueBuilder.create(this, "通知时间")
+            .setDefaultFloatValue(10.0F)
+            .setMinFloatValue(3.0F)
+            .setMaxFloatValue(30.0F)
+            .setFloatStep(1.0F)
+            .build()
+            .getFloatValue();
     
     @EventTarget
     public void onRender(EventRender2D e) {
@@ -158,7 +165,8 @@ public class DynamicIsland extends Module {
             // 渲染阴影效果
             float centerX = (mc.getWindow().getGuiScaledWidth() - currentWidth) / 2.0F;
             float centerY = 20.0F;
-            RenderUtils.drawRoundedRect(e.getStack(), centerX + 2.0F, centerY + 2.0F, currentWidth, currentHeight, CORNER_RADIUS, Integer.MIN_VALUE);
+            // 使用与主体相同的圆角半径8.0F
+            RenderUtils.drawRoundedRect(e.getStack(), centerX + 2.0F, centerY + 2.0F, currentWidth, currentHeight, 8.0F, Integer.MIN_VALUE);
         }
         
         if (e.getType() == EventType.BLUR) {
@@ -179,9 +187,10 @@ public class DynamicIsland extends Module {
             item.getSwitchAnimation().update(true);
         }
         
-        // 移除过期通知（10秒后自动消失）
+        // 移除过期通知（使用配置的时间，转换为毫秒）
         long currentTime = System.currentTimeMillis();
-        notifications.removeIf(item -> currentTime - item.getTimestamp() > 10000);
+        long notificationTimeMs = (long) (notificationTime.getCurrentValue() * 1000);
+        notifications.removeIf(item -> currentTime - item.getTimestamp() > notificationTimeMs);
         
         // 更新当前高度，使用配置的基础高度
         float baseHeight = islandHeight.getCurrentValue();
@@ -196,8 +205,8 @@ public class DynamicIsland extends Module {
         float centerX = (screenWidth - currentWidth) / 2.0F;
         float centerY = 20.0F;
         
-        // 白灰色35%透明度的毛玻璃效果背景
-        int glassColor = new Color(200, 200, 200, 89).getRGB(); // 35%透明度的白灰色
+        // 黑灰色35%透明度的毛玻璃效果背景
+        int glassColor = new Color(50, 50, 50, 89).getRGB(); // 35%透明度的黑灰色
         
         // 添加模糊矩阵
         blurMatrices.add(new Vector4f(centerX, centerY, currentWidth, currentHeight));
@@ -211,14 +220,14 @@ public class DynamicIsland extends Module {
         // 绘制左侧模块名称
         if (showModuleName.getCurrentValue()) {
             String moduleName = "Dynamic Island";
-            font.render(e.getStack(), moduleName, centerX + PADDING, centerY + 12.0F, Color.BLACK, true, 0.35);
+            font.render(e.getStack(), moduleName, centerX + PADDING, centerY + 12.0F, Color.WHITE, true, 0.35);
         }
         
         // 绘制右侧时间
         if (showTime.getCurrentValue()) {
             String time = TIME_FORMAT.format(new Date());
             float timeWidth = font.getWidth(time, 0.35);
-            font.render(e.getStack(), time, centerX + currentWidth - timeWidth - PADDING, centerY + 12.0F, Color.BLACK, true, 0.35);
+            font.render(e.getStack(), time, centerX + currentWidth - timeWidth - PADDING, centerY + 12.0F, Color.WHITE, true, 0.35);
         }
     }
     
@@ -255,10 +264,10 @@ public class DynamicIsland extends Module {
         float centerX = (screenWidth - currentWidth) / 2.0F;
         float centerY = 20.0F;
         
-        float yOffset = DEFAULT_HEIGHT;
+        float yOffset = islandHeight.getCurrentValue(); // 使用配置的基础高度
         
-        // 白灰色35%透明度的毛玻璃效果背景
-        int glassColor = new Color(200, 200, 200, 89).getRGB(); // 35%透明度的白灰色
+        // 黑灰色35%透明度的毛玻璃效果背景
+        int glassColor = new Color(50, 50, 50, 89).getRGB(); // 35%透明度的黑灰色
         
         // 渲染通知项
         for (int i = 0; i < notifications.size(); i++) {
@@ -269,12 +278,12 @@ public class DynamicIsland extends Module {
                 // 添加通知项的模糊矩阵
                 blurMatrices.add(new Vector4f(centerX, centerY + yOffset, currentWidth, itemHeight));
                 
-                // 绘制通知项背景，使用相同的白灰色35%毛玻璃效果
+                // 绘制通知项背景，使用相同的黑灰色35%毛玻璃效果
                 RenderUtils.drawRoundedRect(e.getStack(), centerX, centerY + yOffset, currentWidth, itemHeight, Math.min(CORNER_RADIUS, 8.0F), glassColor);
                 
                 // 绘制模块名称
                 String moduleName = item.getModule().getName();
-                font.render(e.getStack(), moduleName, centerX + PADDING, centerY + yOffset + 10.0F, Color.BLACK, true, 0.35);
+                font.render(e.getStack(), moduleName, centerX + PADDING, centerY + yOffset + 10.0F, Color.WHITE, true, 0.35);
                 
                 // 绘制开关
                 float switchX = centerX + PADDING + font.getWidth(moduleName, 0.35) + 10.0F;
