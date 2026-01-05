@@ -1,0 +1,224 @@
+# 物品切换动画禁用模块实现提示词
+
+## 功能描述
+实现一个Minecraft客户端模组模块，用于禁用游戏中物品切换时的动画效果，提升PvP战斗时的操作响应速度。
+
+## 核心需求
+- 拦截Minecraft原版的物品切换动画
+- 提供模块化的开关控制
+- 只有在模块启用时才禁用动画
+- 保持游戏的其他功能不受影响
+
+## 技术实现要求
+
+### 1. 框架和依赖
+- 使用**Mixin框架**进行代码注入
+- 目标Minecraft版本：1.16.5+ (Forge)
+- 依赖SpongePowered Mixin库
+- 需要客户端权限
+
+### 2. 主要组件
+
+#### A. Mixin类 (MixinItemInHandRenderer)
+**目标类**: `net.minecraft.client.renderer.ItemInHandRenderer**:
+- ``
+
+**拦截方法renderHand()` - 渲染手部物品
+- `renderItem()` - 渲染物品
+
+**注入点**: 
+```java
+@Redirect(
+    method = "renderHand",
+    at = @At(
+        value = "INVOKE",
+        target = "Lnet/minecraft/client/player/LocalPlayer;getAttackAnim(F)F",
+        ordinal = 0
+    )
+)
+```
+
+#### B. 模块类 (NoItemSwitchAnimation)
+**继承**: 您的模组基类模块
+
+**必要方法**:
+- `isEnabled()` - 检查模块是否启用
+- `enable()` - 启用模块
+- `disable()` - 禁用模块
+
+### 3. 实现步骤
+
+#### 步骤1: 创建模块类
+```java
+public class NoItemSwitchAnimation extends Module {
+    private boolean enabled = false;
+    
+    @Override
+    public boolean isEnabled() {
+        return enabled;
+    }
+    
+    @Override
+    public void enable() {
+        enabled = true;
+    }
+    
+    @Override
+    public void disable() {
+        enabled = false;
+    }
+}
+```
+
+#### 步骤2: 创建Mixin类
+```java
+@Mixin(ItemInHandRenderer.class)
+public class MixinItemInHandRenderer {
+    
+    @Redirect(
+        method = "renderHand",
+        at = @At(
+            value = "INVOKE", 
+            target = "Lnet/minecraft/client/player/LocalPlayer;getAttackAnim(F)F",
+            ordinal = 0
+        )
+    )
+    private float hookGetAttackAnim(LocalPlayer player, float partialTicks) {
+        // 获取模块实例的逻辑
+        NoItemSwitchAnimation module = getNoItemSwitchAnimationModule();
+        
+        if (module != null && module.isEnabled()) {
+            return 1.0F; // 返回1.0跳过动画
+        }
+        
+        return player.getAttackAnim(partialTicks);
+    }
+}
+```
+
+#### 步骤3: 模块管理器集成
+- 将NoItemSwitchAnimation注册到模块管理器
+- 在GUI中添加入口
+- 保存/加载模块状态
+
+#### 步骤4: 配置Mixin
+在`mixins.<modid>.json`中注册:
+```json
+{
+  "required": true,
+  "package": "com.yourmod.mixin",
+  "mixins": [
+    "MixinItemInHandRenderer"
+  ],
+  "refmap": "yourmod.refmap.json",
+  "minVersion": "0.8"
+}
+```
+
+### 4. 关键代码逻辑
+
+#### 动画禁用机制
+```java
+// 核心逻辑：当模块启用时，始终返回1.0
+if (module != null && module.isEnabled()) {
+    return 1.0F; // 1.0表示动画已完成状态
+}
+```
+
+#### 拦截点选择
+- **getAttackAnim()**: 控制攻击动画进度
+- **返回1.0**: 让系统认为动画已完成
+- **ordinal=0**: 确保只拦截第一个调用
+
+### 5. 完整Mixi实现示例
+
+```java
+package com.yourmod.mixin;
+
+import com.yourmod.module.NoItemSwitchAnimation;
+import com.yourmod.module.ModuleManager;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.ItemInHandRenderer;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Redirect;
+
+@Mixin(ItemInHandRenderer.class)
+public class MixinItemInHandRenderer {
+    
+    @Redirect(
+        method = "renderHand",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/player/LocalPlayer;getAttackAnim(F)F",
+            ordinal = 0
+        )
+    )
+    private float hookGetAttackAnim(LocalPlayer player, float partialTicks) {
+        NoItemSwitchAnimation module = ModuleManager.getInstance()
+            .getModule(NoItemSwitchAnimation.class);
+        
+        if (module != null && module.isEnabled()) {
+            return 1.0F;
+        }
+        
+        return player.getAttackAnim(partialTicks);
+    }
+    
+    @Redirect(
+        method = "renderItem",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/player/LocalPlayer;getAttackAnim(F)F",
+            ordinal = 0
+        )
+    )
+    private float hookRenderItemGetAttackAnim(LocalPlayer player, float partialTicks) {
+        NoItemSwitchAnimation module = ModuleManager.getInstance()
+            .getModule(NoItemSwitchAnimation.class);
+        
+        if (module != null && module.isEnabled()) {
+            return 1.0F;
+        }
+        
+        return player.getAttackAnim(partialTicks);
+    }
+}
+```
+
+### 6. 注意事项
+
+#### 兼容性
+- 确保Mixin注解版本兼容
+- 目标Minecraft版本和Forge版本匹配
+- 测试不同模组组合下的稳定性
+
+#### 性能考虑
+- 模块检查应该是轻量级的
+- 避免在渲染循环中执行重逻辑
+- 缓存模块实例避免重复查找
+
+#### 用户体验
+- 提供清晰的开关状态反馈
+- 在设置中添加入口
+- 默认状态应该是禁用（不破坏原版体验）
+
+#### 调试建议
+- 使用日志输出确认模块状态
+- 测试开关功能的可靠性
+- 验证动画确实被跳过
+
+### 7. 测试验证
+
+#### 功能测试
+1. 启用模块后物品切换是否瞬间完成
+2. 禁用模块后动画恢复正常
+3. 与其他模组的兼容性
+4. 不同物品类型的切换效果
+
+#### 性能测试
+1. 帧率影响评估
+2. 内存使用情况
+3. 加载时间影响
+
+这个实现可以让您在其他项目中快速重现类似的物品切换动画禁用功能。

@@ -1,0 +1,10 @@
+Manifest-Version: 1.0
+Specification-Title: Naven-Modern
+Specification-Vendor: heike
+Specification-Version: 1
+Implementation-Title: Naven-Modern
+Implementation-Version: 1337
+Implementation-Vendor: heike
+Implementation-Timestamp: 2026-01-05T14:37:20+0800
+MixinConfigs: Naven-Modern.mixins.json
+

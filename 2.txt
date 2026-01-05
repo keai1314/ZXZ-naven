@@ -1,0 +1,312 @@
+# Scaffold模块完整放置功能实现提示词
+
+## 功能描述
+实现一个完整的Scaffold（脚手架）模块，包括路径寻找、快速放置和自救机制，能够在玩家移动时自动在脚下放置方块，支持不同速度下的放置策略，以及在玩家掉落时自动自救。
+
+## 核心功能模块
+
+### 1. 路径寻找系统
+- **基础路径检测**：检测玩家当前位置下方需要放置方块的位置
+- **扩展路径检测**：检测玩家移动方向上需要放置方块的位置
+- **优先级排序**：根据距离和可行性对放置位置进行排序
+- **碰撞检测**：避免在无效方块（如液体、特殊方块）上放置
+
+### 2. 快速放置系统
+- **物品自动切换**：自动从背包中选择合适的方块物品
+- **旋转调整**：自动调整玩家视角以确保放置成功
+- **快速放置算法**：高效的方块放置逻辑，支持不同速度下的调整
+- **放置后物品切换**：放置完成后自动切换回原物品
+
+### 3. 自救机制
+- **掉落检测**：检测玩家是否处于掉落状态
+- **紧急放置**：在掉落时快速放置方块，防止玩家摔落
+- **卡住机制**：暂时冻结玩家行为，确保放置成功
+
+## 关键实现步骤
+
+### 1. 路径寻找实现
+
+#### 1.1 基础位置检测
+```java
+private void findBlock() {
+    // 获取玩家当前位置
+    Vec3d playerPos = mc.player.getEyePos();
+    int baseY = (int) mc.player.getPos().y - 1;
+    
+    // 检测玩家正下方位置
+    BlockPos base = new BlockPos((int) playerPos.x, baseY, (int) playerPos.z);
+    if (checkBlock(playerPos, base)) {
+        return;
+    }
+    
+    // 扩展检测范围，搜索周围需要放置的位置
+    for (int d = 1; d <= 6; d++) {
+        // 检测下方d格位置
+        if (checkBlock(playerPos, new BlockPos((int) playerPos.x, baseY - d, (int) playerPos.z))) {
+            return;
+        }
+        
+        // 检测周围d格范围内的位置
+        for (int x = 1; x <= d; x++) {
+            for (int z = 0; z <= d - x; z++) {
+                int y = d - x - z;
+                // 检测四个方向
+                for (int rev1 = 0; rev1 <= 1; rev1++) {
+                    for (int rev2 = 0; rev2 <= 1; rev2++) {
+                        BlockPos checkPos = new BlockPos(
+                            (int) playerPos.x + (rev1 == 0 ? x : -x),
+                            baseY - y,
+                            (int) playerPos.z + (rev2 == 0 ? z : -z)
+                        );
+                        if (checkBlock(playerPos, checkPos)) {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+#### 1.2 方块可行性检测
+```java
+private boolean checkBlock(Vec3d playerPos, BlockPos pos) {
+    // 检查目标位置是否为空气
+    if (!(mc.world.getBlockState(pos).getBlock() instanceof AirBlock)) {
+        return false;
+    }
+    
+    // 获取目标位置中心
+    Vec3d center = new Vec3d(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+    
+    // 检查六个方向是否有可附着的方块
+    for (Direction face : Direction.values()) {
+        Vec3d hit = center.add(fromVec3i(face.getVector()).multiply(0.5));
+        BlockPos attachPos = pos.add(face.getVector());
+        
+        // 检查附着位置是否为完整方块
+        if (Block.isShapeFullCube(
+            mc.world.getBlockState(attachPos).getCollisionShape(mc.world, attachPos)
+        )) {
+            // 检查距离是否在可放置范围内
+            Vec3d relevant = hit.subtract(playerPos);
+            if (relevant.lengthSquared() <= 4.5 * 4.5 && relevant.dotProduct(
+                fromVec3i(face.getVector())
+            ) >= 0) {
+                // 记录可放置位置和方向
+                this.blockPos = attachPos;
+                this.face = face.getOpposite();
+                return true;
+            }
+        }
+    }
+    return false;
+}
+```
+
+### 2. 快速放置实现
+
+#### 2.1 物品自动切换
+```java
+private FindItemResult findBlockItem() {
+    // 从快捷栏中查找合适的方块
+    FindItemResult result = InvUtils.findInHotbar(itemStack -> {
+        if (itemStack.getItem() instanceof BlockItem) {
+            Block block = ((BlockItem) itemStack.getItem()).getBlock();
+            // 排除无效方块
+            return !invalidBlocks.contains(block);
+        }
+        return false;
+    });
+    return result;
+}
+
+private void switchToBlockItem(FindItemResult result) {
+    if (result.isHotbar()) {
+        // 切换到找到的方块物品
+        hotbar.selectSlot(result.slot(), swapDelay.get());
+    } else if (result.isOffhand()) {
+        // 使用副手物品
+        this.useOffhand = true;
+    }
+}
+```
+
+#### 2.2 旋转调整与放置
+```java
+private void placeBlock(boolean needRotate) {
+    if (blockPos == null) {
+        return;
+    }
+    
+    // 查找并切换到合适的方块物品
+    FindItemResult result = findBlockItem();
+    if (!result.found()) {
+        return;
+    }
+    switchToBlockItem(result);
+    
+    // 计算放置位置和方向
+    BlockHitResult hitResult = new BlockHitResult(
+        getHitVec(blockPos, face), face, blockPos, false
+    );
+    
+    // 旋转调整
+    if (needRotate) {
+        VecRotation rotation = rotM.faceBlock(blockPos);
+        if (rotation != null) {
+            rotate.rotation(rotation.rotation()).keep(3).reach(4).set();
+        }
+    } else {
+        // 发送旋转数据包，不影响视觉效果
+        VecRotation rotation = rotM.faceBlock(blockPos);
+        if (rotation != null) {
+            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(
+                rotation.rotation().yaw, rotation.rotation().pitch, mc.player.isOnGround()
+            ));
+        }
+    }
+    
+    // 执行放置操作
+    Hand hand = useOffhand ? Hand.OFF_HAND : Hand.MAIN_HAND;
+    if (mc.interactionManager.interactBlock(mc.player, hand, hitResult) == ActionResult.SUCCESS) {
+        mc.player.swingHand(hand);
+    }
+    
+    // 重置状态
+    blockPos = null;
+    useOffhand = false;
+}
+```
+
+### 3. 自救机制实现
+
+#### 3.1 掉落检测
+```java
+private boolean isFalling() {
+    // 检查玩家是否在掉落状态
+    if (!mc.player.isOnGround() && mc.player.getVelocity().y < 0) {
+        // 使用FallingPlayer类检测是否会摔落
+        FallingPlayer fallingPlayer = new FallingPlayer(mc.player);
+        fallingPlayer.calculate(2); // 计算2格内的掉落情况
+        return fallingPlayer.getBlockPos() != null;
+    }
+    return false;
+}
+```
+
+#### 3.2 自救放置逻辑
+```java
+private void handleSelfRescue() {
+    if (isFalling()) {
+        // 增加卡住计数器，暂时冻结玩家行为
+        PlayerUtils.playerStuckTicks++;
+        
+        // 快速放置方块
+        placeBlock(false);
+        
+        // 重置掉落状态
+        offGroundTicks = 0;
+    }
+}
+```
+
+### 4. 速度自适应放置
+
+#### 4.1 速度检测与调整
+```java
+private void adjustPlacementBySpeed() {
+    // 获取玩家当前速度
+    double speed = Math.max(
+        Math.abs(mc.player.getVelocity().x),
+        Math.abs(mc.player.getVelocity().z)
+    );
+    
+    // 根据速度调整放置策略
+    if (speed <= 0.4) {
+        // 低速时，更频繁地放置方块
+        placeBlock(true);
+    } else if (speed <= 0.8) {
+        // 中速时，调整放置间隔
+        if (offGroundTicks >= 1) {
+            placeBlock(true);
+        }
+    } else {
+        // 高速时，只在必要时放置
+        if (offGroundTicks >= 2) {
+            placeBlock(false);
+        }
+    }
+}
+```
+
+## 核心配置选项
+
+### 1. 基础配置
+- `fullSprint`：是否启用全速冲刺模式
+- `switchBack`：放置后是否切换回原物品
+- `swapDelay`：物品切换延迟（游戏刻）
+- `range`：放置检测范围
+
+### 2. 速度配置
+- `lowSpeedThreshold`：低速阈值
+- `mediumSpeedThreshold`：中速阈值
+- `highSpeedThreshold`：高速阈值
+
+### 3. 自救配置
+- `selfRescueEnabled`：是否启用自救机制
+- `fallDistanceThreshold`：触发自救的掉落距离
+
+## 注意事项
+
+1. **性能优化**：
+   - 限制路径寻找的检测范围，避免过多计算
+   - 使用缓存机制，减少重复检测
+   - 优化旋转计算，避免频繁调整视角
+
+2. **防检测机制**：
+   - 模拟真实玩家的放置行为，避免过于机械
+   - 随机化放置间隔和旋转角度
+   - 限制放置速度，避免超出正常玩家能力
+
+3. **安全性**：
+   - 避免在无效位置放置方块，防止游戏崩溃
+   - 处理空指针异常，确保模块稳定运行
+   - 限制物品切换频率，避免被服务器检测
+
+4. **兼容性**：
+   - 适配不同版本的游戏机制
+   - 支持不同类型的方块和物品
+   - 兼容其他模块的功能
+
+## 实现架构建议
+
+1. **模块化设计**：将路径寻找、放置逻辑、旋转调整等功能拆分为独立模块
+2. **事件驱动**：使用事件系统处理玩家移动、tick更新等事件
+3. **配置化**：使用配置系统管理所有可调整参数
+4. **可扩展**：设计良好的接口，便于后续扩展功能
+
+## 测试建议
+
+1. **基础功能测试**：
+   - 在平坦地形测试基本放置功能
+   - 测试不同速度下的放置效果
+   - 测试物品自动切换功能
+
+2. **边界情况测试**：
+   - 测试在边缘位置的放置效果
+   - 测试在不同高度的放置效果
+   - 测试背包中没有方块时的处理
+
+3. **自救功能测试**：
+   - 测试从不同高度掉落时的自救效果
+   - 测试在移动中掉落的自救效果
+   - 测试连续掉落的自救效果
+
+4. **性能测试**：
+   - 测试长时间运行的性能表现
+   - 测试在复杂地形下的性能表现
+   - 测试同时启用多个模块时的性能表现
+
+这个提示词涵盖了Scaffold模块完整放置功能的实现细节，包括路径寻找、快速放置和自救机制。你可以根据实际项目的架构和需求进行调整，实现一个高效、稳定、安全的Scaffold模块。

@@ -1,0 +1,122 @@
+# Scaffold模块自救卡住状态关闭逻辑实现提示词
+
+## 功能描述
+本提示词专门说明Scaffold（脚手架）模块中，自救时玩家卡住状态的自动关闭机制，包括核心实现原理、代码位置和关闭流程。
+
+## 核心关闭机制
+
+### 1. 自动递减原理
+- **核心设计**：卡住状态通过`PlayerUtils.playerStuckTicks`静态变量的自动递减实现关闭
+- **变量定义**：`PlayerUtils.playerStuckTicks`定义在`PlayerUtils.java`中，初始值为0
+- **递减逻辑**：每游戏刻自动减少，直到归零，卡住状态自动解除
+
+### 2. 关键代码实现
+
+#### 2.1 PlayerUtils.java - 变量定义
+```java
+public class PlayerUtils {
+    // 玩家卡住计数器，初始值为0
+    public static int playerStuckTicks = 0;
+    
+    // 其他工具方法...
+}
+```
+
+#### 2.2 MixinClientPlayerEntity.java - Tick事件拦截
+```java
+@Inject(method = "tick", at = @At("HEAD"), cancellable = true)
+private void hookTickEvent(CallbackInfo ci) {
+    // 当卡住计数器大于0时，减少计数并取消Tick事件
+    if (PlayerUtils.playerStuckTicks > 0) {
+        PlayerUtils.playerStuckTicks--; // 每刻自动减1
+        ci.cancel(); // 取消玩家Tick事件，保持卡住状态
+    }
+}
+```
+
+#### 2.3 MixinClientWorld.java - 双重递减与最大值限制
+```java
+@Inject(method = "tickEntity", at = @At("HEAD"))
+private void onTickEntity(Entity instance, CallbackInfo ci) {
+    // 对玩家实体额外执行递减
+    if (PlayerUtils.playerStuckTicks > 0 && instance.equals(mc.player)) {
+        PlayerUtils.playerStuckTicks--; // 每刻再次减1，实际每刻共减2
+        
+        // 限制最大值为20，防止永久卡住
+        if (PlayerUtils.playerStuckTicks > 20) {
+            PlayerUtils.playerStuckTicks = 20;
+        }
+    }
+}
+```
+
+## 关闭流程详解
+
+### 1. 触发卡住
+```java
+// 当需要自救时，Scaffold模块中执行
+PlayerUtils.playerStuckTicks++;
+```
+- 此时`playerStuckTicks`变为1或更大
+- 玩家进入卡住状态，无法正常移动和下落
+
+### 2. 持续卡住
+- 每游戏刻，`MixinClientPlayerEntity.hookTickEvent`执行`playerStuckTicks--`
+- 同时，`MixinClientWorld.onTickEntity`对玩家实体再次执行`playerStuckTicks--`
+- 实际每游戏刻`playerStuckTicks`减少2
+- 只要`playerStuckTicks > 0`，就会取消玩家Tick事件，保持卡住状态
+
+### 3. 自动关闭
+- 随着每刻递减，`playerStuckTicks`最终会变为0
+- 当`playerStuckTicks = 0`时，不再满足`> 0`的条件
+- 不再取消玩家的Tick事件，玩家恢复正常移动和下落
+- 卡住状态自动关闭，无需任何手动操作
+
+## 设计特点
+
+1. **完全自动**：
+   - 无显式关闭方法，无需手动干预
+   - 系统自动处理卡住和恢复过程
+
+2. **时间可控**：
+   - 卡住持续时间由初始`playerStuckTicks`值决定
+   - 每增加1，多持续约0.5游戏刻（因每刻减2）
+
+3. **安全可靠**：
+   - 最大值限制为20，防止永久卡住
+   - 双重递减机制，确保及时关闭
+   - 无内存泄漏风险
+
+4. **性能友好**：
+   - 每刻只执行简单的整数递减和判断
+   - 无复杂计算或资源消耗
+
+## 注意事项
+
+1. **无需手动干预**：
+   - 不要尝试手动设置`playerStuckTicks = 0`来关闭卡住状态
+   - 系统会自动处理，手动干预可能导致异常
+
+2. **调整持续时间**：
+   - 如需调整卡住持续时间，修改触发时的`playerStuckTicks`增加值
+   - 例如：`PlayerUtils.playerStuckTicks += 2;` 会使卡住时间延长一倍
+
+3. **兼容性考虑**：
+   - 确保`MixinClientPlayerEntity`和`MixinClientWorld`的注入点正确
+   - 不同游戏版本可能需要调整注入位置
+
+## 测试建议
+
+1. **基础测试**：
+   - 测试自救功能，观察卡住状态是否自动关闭
+   - 检查`playerStuckTicks`值的变化情况
+
+2. **边界测试**：
+   - 测试连续多次触发自救，确保`playerStuckTicks`不会超出最大值
+   - 测试不同速度下的卡住关闭效果
+
+3. **性能测试**：
+   - 长时间运行测试，确保无性能问题
+   - 测试同时启用多个模块时的表现
+
+这个提示词详细说明了Scaffold模块自救卡住状态的关闭逻辑，包括核心实现原理、代码位置和关闭流程。你可以根据实际项目架构和需求进行调整，实现一个安全、可靠、自动的卡住状态关闭机制。

@@ -1,0 +1,198 @@
+# Minecraft Forge Mod 玩家卡住机制实现提示词
+
+## 功能描述
+实现一个玩家卡住机制，用于在特定条件下（如高速移动时）冻结玩家行为，执行批量操作（如放置方块），然后根据释放条件自动恢复玩家正常状态。
+
+## 核心实现原理
+
+### 1. 卡住状态管理
+- 使用静态变量 `playerStuckTicks` 管理卡住状态，初始值为0
+- 当 `playerStuckTicks > 0` 时，玩家处于卡住状态
+- 每游戏刻递增计数器，达到阈值后自动释放
+
+### 2. 卡住行为实现
+- 使用 Mixin 注入玩家 Tick 事件
+- 当检测到 `playerStuckTicks > 0` 时，取消玩家 Tick 事件，冻结玩家行为
+- 保留必要的系统功能，如方块放置、网络通信等
+
+### 3. 释放条件检测
+- 每游戏刻检查释放条件
+- 满足任一条件即释放玩家：
+  - 卡住时间超过阈值
+  - 玩家脚下有方块
+  - 正脚下有方块（射线检测）
+  - 手动触发释放
+
+### 4. 批量操作执行
+- 在卡住状态下，执行批量操作（如放置方块）
+- 确保操作使用正确的旋转角度
+- 执行完操作后检查释放条件
+
+## 实现步骤
+
+### 1. 创建工具类管理卡住状态
+```java
+public class PlayerUtils {
+    // 玩家卡住计数器，初始值为0
+    public static int playerStuckTicks = 0;
+    // 是否使用自动递减关闭逻辑，默认为false
+    public static boolean useAutoDecrementClose = false;
+    
+    // 检查玩家脚下是否有方块
+    public static boolean hasBlockUnderFeet() {
+        // 实现脚下方块检测逻辑
+    }
+    
+    // 向正脚下发射射线，检测2格内是否有方块
+    public static boolean isBlockBelowInRange() {
+        // 实现射线检测逻辑
+    }
+}
+```
+
+### 2. 使用Mixin注入玩家Tick事件
+```java
+@Mixin({Player.class})
+public abstract class MixinPlayer extends LivingEntity {
+    @Inject(
+        method = {"tick"},
+        at = {@At("HEAD")},
+        cancellable = true
+    )
+    private void onTick(CallbackInfo ci) {
+        if (PlayerUtils.playerStuckTicks > 0) {
+            if (PlayerUtils.useAutoDecrementClose) {
+                // 自动递减逻辑
+                PlayerUtils.playerStuckTicks--;
+                ci.cancel();
+            } else {
+                // 传统关闭逻辑
+                if (PlayerUtils.playerStuckTicks > 15 || PlayerUtils.hasBlockUnderFeet() || PlayerUtils.isBlockBelowInRange()) {
+                    PlayerUtils.playerStuckTicks = 0;
+                } else {
+                    ci.cancel(); // 冻结玩家行为
+                }
+            }
+        }
+    }
+}
+```
+
+### 3. 实现触发逻辑
+```java
+// 在合适的地方（如模块的Tick事件中）实现触发逻辑
+if (满足触发条件) {
+    // 增加卡住计数器
+    PlayerUtils.playerStuckTicks++;
+    // 执行批量操作
+    performBatchOperations();
+}
+```
+
+### 4. 实现批量操作
+```java
+private void performBatchOperations() {
+    // 保存原始旋转角度
+    float originalYaw = mc.player.getYRot();
+    float originalPitch = mc.player.getXRot();
+    
+    try {
+        // 遍历所有要操作的位置
+        for (操作位置 : 操作列表) {
+            // 设置正确的旋转角度
+            mc.player.setYRot(计算出的Yaw);
+            mc.player.setXRot(计算出的Pitch);
+            
+            // 执行操作（如放置方块）
+            // ...
+        }
+        
+        // 检查释放条件
+        if (PlayerUtils.hasBlockUnderFeet()) {
+            PlayerUtils.playerStuckTicks = 0;
+        }
+    } finally {
+        // 恢复原始旋转角度
+        mc.player.setYRot(originalYaw);
+        mc.player.setXRot(originalPitch);
+    }
+}
+```
+
+### 5. 配置选项
+```java
+// 添加配置选项，允许用户调整卡住参数
+public BooleanValue useAutoDecrementClose = ValueBuilder.create(this, "自动递减关闭")
+        .setDefaultBooleanValue(false)
+        .build()
+        .getBooleanValue();
+
+public FloatValue stuckTimeoutTicks = ValueBuilder.create(this, "卡住超时(tick)")
+        .setDefaultFloatValue(15.0F)
+        .setMinFloatValue(5.0F)
+        .setMaxFloatValue(30.0F)
+        .build()
+        .getFloatValue();
+```
+
+## 关键技术点
+
+### 1. Mixin注入
+- 使用 `@Inject` 注入玩家 `tick` 方法
+- 使用 `cancellable = true` 允许取消事件
+- 在 `@At("HEAD")` 位置注入，确保优先执行
+
+### 2. 旋转角度处理
+- 保存并恢复玩家原始旋转角度
+- 为每个操作计算正确的旋转角度
+- 确保操作使用的旋转角度与网络数据包一致
+
+### 3. 释放条件优先级
+- 脚下有方块 > 正脚下有方块 > 超时检测
+- 确保释放条件覆盖所有可能情况
+- 避免永久卡住
+
+### 4. 性能优化
+- 减少不必要的计算
+- 限制检测范围
+- 优化射线检测性能
+
+## 注意事项
+
+### 1. 避免永久卡住
+- 设置合理的超时阈值
+- 确保至少有一个可靠的释放条件
+- 添加紧急释放机制
+
+### 2. 与其他模块兼容
+- 确保卡住机制不影响其他模块功能
+- 处理好与移动、战斗等模块的交互
+
+### 3. 网络同步
+- 确保客户端和服务器状态同步
+- 处理好延迟和丢包情况
+
+### 4. 测试覆盖
+- 测试各种触发条件
+- 测试各种释放条件
+- 测试批量操作的正确性
+- 测试性能影响
+
+## 应用场景
+
+### 1. 高速移动自救
+- 检测玩家高速移动时
+- 批量放置方块防止摔落
+- 自动释放，恢复正常移动
+
+### 2. 紧急情况处理
+- 检测玩家处于危险状态时
+- 执行紧急操作
+- 确保玩家安全
+
+### 3. 自动化操作
+- 在特定条件下执行批量操作
+- 冻结玩家行为，确保操作完成
+- 自动恢复，不影响玩家体验
+
+这个提示词详细描述了Minecraft Forge Mod中玩家卡住机制的实现原理、步骤和关键技术点，确保AI能够生成正确、高效、安全的代码。

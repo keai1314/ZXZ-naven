@@ -1,0 +1,249 @@
+# FakeLag 动态模式实现详细 AI 提示词
+
+## 1. 模块概述
+FakeLag 是一个用于延迟发送数据包的模块，其主要功能是通过控制数据包的发送时机，使玩家在服务器上的位置与客户端显示位置产生差异，从而避免被敌人击中。该模块支持两种工作模式：常量模式（CONSTANT）和动态模式（DYNAMIC）。
+
+## 2. 核心设计思路
+- **常量模式（CONSTANT）**：始终延迟发送数据包，无论周围是否有敌人
+- **动态模式（DYNAMIC）**：智能判断何时延迟数据包，仅在必要时（即敌人在设定范围内时）启用 FakeLag，提高生存能力的同时减少对正常游戏的影响
+
+## 3. 动态模式实现细节
+
+### 3.1 核心功能
+动态模式的核心思想是：**只在敌人靠近时才启用 FakeLag，并且根据玩家与敌人的相对位置智能调整延迟策略**。
+
+### 3.2 触发条件
+- 当敌人在设定范围内时（通过 `range` 参数配置），才会启用 FakeLag
+- 支持配置范围区间，例如 2f..5f，表示当敌人在 2-5 格范围内时触发
+
+### 3.3 延迟逻辑
+1. **位置检查**：比较服务器位置（队列中的位置）和客户端实际位置
+2. **距离计算**：分别计算服务器位置和客户端位置与敌人的距离
+3. **智能判断**：
+   - 如果服务器位置比客户端位置离敌人更近，说明当前延迟已经足够，不再延迟新数据包
+   - 如果玩家与实体相交，立即发送数据包，避免被检测到
+   - 否则，将数据包加入队列进行延迟发送
+
+### 3.4 特殊情况处理
+- **使用消耗品时**：不延迟数据包，确保物品正常使用
+- **受到攻击时**：立即刷新队列，确保玩家能及时做出反应
+- **被击退时**：立即刷新队列，避免影响移动
+- **爆炸时**：立即刷新队列，确保玩家能及时躲避
+
+## 4. 关键代码实现
+
+### 4.1 模块基础结构
+```kotlin
+object ModuleFakeLag : ClientModule("FakeLag", Category.COMBAT) {
+    private val range by floatRange("Range", 2f..5f, 0f..10f)
+    private val delay by intRange("Delay", 300..600, 0..1000, "ms")
+    private val recoilTime by int("RecoilTime", 250, 0..1000, "ms")
+    private val mode by enumChoice("Mode", Mode.DYNAMIC).apply { tagBy(this) }
+
+    private enum class Mode(override val choiceName: String) : NamedChoice {
+        CONSTANT("Constant"),
+        DYNAMIC("Dynamic")
+    }
+    
+    // 其他代码...
+}
+```
+
+### 4.2 动态模式核心逻辑
+```kotlin
+private val fakeLagHandler = handler<QueuePacketEvent> { event ->
+    // 基本过滤条件检查
+    if (event.origin != TransferOrigin.OUTGOING || player.isDead || player.isTouchingWater || mc.currentScreen != null) {
+        return@handler
+    }
+    
+    // 检查消耗品使用情况
+    if (player.isUsingItem && player.activeItem.isConsumable) {
+        return@handler
+    }
+    
+    // 根据模式选择处理方式
+    event.action = when (mode) {
+        Mode.CONSTANT -> PacketQueueManager.Action.QUEUE
+        Mode.DYNAMIC -> {
+            // 检查敌人是否在范围内
+            if (!isEnemyNearby) {
+                return@handler
+            }
+            
+            val position = positions.firstOrNull() ?: run {
+                event.action = PacketQueueManager.Action.QUEUE
+                return@handler
+            }
+            val playerBox = player.dimensions.getBoxAt(position)
+            
+            // 获取范围内的敌人
+            val entities = world.getEntitiesBoxInRange(position, range.endInclusive.toDouble()) {
+                it != player && it.shouldBeAttacked()
+            }
+            
+            // 无敌人则不延迟
+            if (entities.isEmpty()) {
+                return@handler
+            }
+            
+            // 检查是否与实体相交
+            val intersects = entities.any { it.box.intersects(playerBox) }
+            
+            // 计算服务器位置与敌人的距离
+            val serverDistance = entities.minOfOrNull { it.pos.distanceTo(position) } ?: return@handler
+            // 计算客户端位置与敌人的距离
+            val clientDistance = entities.minOfOrNull { it.pos.distanceTo(player.pos) } ?: return@handler
+            
+            // 智能判断是否延迟
+            if (serverDistance < clientDistance || intersects) {
+                return@handler
+            }
+            
+            PacketQueueManager.Action.QUEUE
+        }
+    }
+}
+```
+
+### 4.3 敌人检测逻辑
+```kotlin
+private val gameTickHandler = tickHandler {
+    // 检测敌人是否在范围内
+    isEnemyNearby = world.findEnemy(range) != null
+    
+    // 与 AutoDodge 模块联动（可选）
+    if (ModuleAutoDodge.running) {
+        // 箭雨躲避逻辑...
+    }
+}
+```
+
+### 4.4 数据包过滤与刷新
+```kotlin
+// 处理特殊数据包
+when (val packet = event.packet) {
+    is PlayerPositionLookS2CPacket, is ResourcePackStatusC2SPacket -> {
+        chronometer.reset()
+        return@handler
+    }
+    
+    // 受到攻击时刷新
+    is EntityVelocityUpdateS2CPacket -> {
+        if (packet.entityId == player.id && (packet.velocityX != 0 || packet.velocityY != 0 || packet.velocityZ != 0)) {
+            chronometer.reset()
+            return@handler
+        }
+    }
+    
+    // 爆炸时刷新
+    is ExplosionS2CPacket -> {
+        packet.playerKnockback.getOrNull()?.let { knockback ->
+            if (knockback.x != 0.0 || knockback.y != 0.0 || knockback.z != 0.0) {
+                chronometer.reset()
+                return@handler
+            }
+        }
+    }
+    
+    // 受到伤害时刷新
+    is HealthUpdateS2CPacket -> {
+        chronometer.reset()
+        return@handler
+    }
+}
+```
+
+## 5. 配置参数说明
+
+| 参数名 | 类型 | 默认值 | 描述 |
+|--------|------|--------|------|
+| Range | floatRange | 2f..5f | 触发 FakeLag 的敌人距离范围 |
+| Delay | intRange | 300..600 | 数据包延迟时间范围（毫秒） |
+| RecoilTime | int | 250 | 后坐力恢复时间（毫秒） |
+| Mode | enumChoice | DYNAMIC | 工作模式，可选 CONSTANT 或 DYNAMIC |
+| FlushOn | multiEnumChoice | ENTITY_INTERACT, BLOCK_INTERACT, ACTION | 在哪些操作时刷新队列 |
+
+## 6. 与其他模块的交互
+
+### 6.1 与 AutoShoot 联动
+```kotlin
+// 支持与 AutoShoot 模块配合使用
+if (running && ModuleAutoShoot.constantLag && ModuleAutoShoot.targetTracker.target == null) {
+    event.action = PacketQueueManager.Action.QUEUE
+    return@handler
+}
+```
+
+### 6.2 与 AutoDodge 联动
+```kotlin
+if (ModuleAutoDodge.running) {
+    val position = positions.firstOrNull() ?: return@tickHandler
+    
+    // 箭雨躲避逻辑
+    val evadingPacket = ModuleAutoDodge.findAvoidingArrowPosition()
+    if (evadingPacket == null) {
+        // 无法躲避时，刷新队列
+        PacketQueueManager.flush(TransferOrigin.OUTGOING)
+    } else {
+        // 找到躲避位置时，只发送到该位置的数据包
+        PacketQueueManager.flush(evadingPacket.idx + 1)
+    }
+}
+```
+
+## 7. 数据包队列管理
+
+### 7.1 核心功能
+- **数据包队列**：存储待发送的数据包
+- **位置跟踪**：记录队列中对应的玩家位置
+- **定时刷新**：根据配置的延迟时间，定期发送队列中的数据包
+- **手动刷新**：在特殊情况下立即发送所有数据包
+
+### 7.2 关键方法
+- `PacketQueueManager.Action.QUEUE`：将数据包加入队列
+- `PacketQueueManager.flush()`：刷新整个队列，发送所有数据包
+- `PacketQueueManager.flush(count)`：发送队列中的前 N 个数据包
+
+## 8. 实现建议
+
+### 8.1 性能优化
+- **敌人检测**：使用高效的实体查找算法，避免遍历所有实体
+- **距离计算**：使用平方距离比较，减少计算开销
+- **队列管理**：限制队列最大长度，避免内存占用过高
+
+### 8.2 可扩展性
+- **模式设计**：使用枚举类设计模式，方便后续添加新的模式
+- **事件驱动**：基于事件系统实现，便于与其他模块交互
+- **配置灵活**：使用范围配置，允许用户根据需要调整参数
+
+### 8.3 安全性考虑
+- **避免过度延迟**：设置合理的延迟范围，避免被服务器检测
+- **及时响应**：在受到攻击等关键情况下立即刷新队列
+- **实体相交检测**：确保不会因为延迟导致玩家与实体重叠，被服务器检测到
+
+## 9. 测试与调试
+
+### 9.1 测试场景
+- **单敌人场景**：测试在单个敌人接近时的表现
+- **多敌人场景**：测试在多个敌人围攻时的表现
+- **移动场景**：测试在移动中使用 FakeLag 的表现
+- **战斗场景**：测试在实际战斗中的效果
+
+### 9.2 调试建议
+- **添加日志**：记录队列状态、延迟时间等信息
+- **可视化**：在屏幕上显示当前延迟状态和敌人距离
+- **性能监控**：监控队列长度和数据包处理时间
+
+## 10. 总结
+
+动态模式的 FakeLag 是一种智能的数据包延迟技术，通过根据敌人距离和位置关系自动调整延迟策略，在提高生存能力的同时减少对正常游戏的影响。其核心设计理念是"只在需要时才延迟"，通过精细的算法实现了高效、安全的 FakeLag 效果。
+
+实现该功能时，需要注意以下几点：
+1. 确保模式切换逻辑清晰，便于维护和扩展
+2. 合理处理各种特殊情况，确保游戏体验流畅
+3. 与其他模块良好配合，实现功能互补
+4. 注重性能优化，避免影响游戏运行效率
+5. 考虑安全性，避免被服务器检测到异常行为
+
+通过以上设计和实现，可以在其他项目中成功实现 FakeLag 的动态模式，为玩家提供更好的游戏体验和生存能力。
