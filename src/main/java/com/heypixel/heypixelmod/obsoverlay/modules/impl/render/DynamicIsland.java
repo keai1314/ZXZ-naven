@@ -287,12 +287,44 @@ public class DynamicIsland extends Module {
     }
     
     private void renderSwitch(EventRender2D e, float x, float y, float value, boolean enabled) {
-        // 绘制开关背景
-        RenderUtils.drawRoundedRect(e.getStack(), x, y, SWITCH_WIDTH, SWITCH_HEIGHT, SWITCH_HEIGHT / 2.0F, enabled ? SWITCH_ON_COLOR : SWITCH_OFF_COLOR);
+        // 开关颜色配置 - 更鲜艳的颜色
+        int onColor = new Color(46, 204, 113, 255).getRGB();  // 鲜绿色
+        int offColor = new Color(231, 76, 60, 255).getRGB();  // 鲜红色
         
-        // 绘制开关滑块
+        // 背景颜色根据动画值渐变
+        int bgColor = interpolateColor(offColor, onColor, value / 100.0F);
+        RenderUtils.drawRoundedRect(e.getStack(), x, y, SWITCH_WIDTH, SWITCH_HEIGHT, SWITCH_HEIGHT / 2.0F, bgColor);
+        
+        // 绘制开关滑块 - 带阴影效果
         float sliderX = x + (value / 100.0F) * (SWITCH_WIDTH - SWITCH_HEIGHT);
-        RenderUtils.drawRoundedRect(e.getStack(), sliderX, y, SWITCH_HEIGHT, SWITCH_HEIGHT, SWITCH_HEIGHT / 2.0F, new Color(30, 30, 30, 220).getRGB());
+        
+        // 滑块阴影
+        RenderUtils.drawRoundedRect(e.getStack(), sliderX + 1.0F, y + 1.0F, SWITCH_HEIGHT, SWITCH_HEIGHT, SWITCH_HEIGHT / 2.0F, new Color(0, 0, 0, 80).getRGB());
+        
+        // 滑块主体 - 白色
+        RenderUtils.drawRoundedRect(e.getStack(), sliderX, y, SWITCH_HEIGHT, SWITCH_HEIGHT, SWITCH_HEIGHT / 2.0F, Color.WHITE.getRGB());
+        
+        // 滑块内部小点
+        float dotSize = 4.0F;
+        float dotX = sliderX + SWITCH_HEIGHT / 2.0F - dotSize / 2.0F;
+        float dotY = y + SWITCH_HEIGHT / 2.0F - dotSize / 2.0F;
+        RenderUtils.fill(e.getStack(), dotX, dotY, dotX + dotSize, dotY + dotSize, enabled ? onColor : offColor);
+    }
+    
+    private int interpolateColor(int color1, int color2, float ratio) {
+        int r1 = (color1 >> 16) & 0xFF;
+        int g1 = (color1 >> 8) & 0xFF;
+        int b1 = color1 & 0xFF;
+        
+        int r2 = (color2 >> 16) & 0xFF;
+        int g2 = (color2 >> 8) & 0xFF;
+        int b2 = color2 & 0xFF;
+        
+        int r = (int) (r1 + (r2 - r1) * ratio);
+        int g = (int) (g1 + (g2 - g1) * ratio);
+        int b = (int) (b1 + (b2 - b1) * ratio);
+        
+        return (255 << 24) | (r << 16) | (g << 8) | b;
     }
     
     // 处理模块启用事件
